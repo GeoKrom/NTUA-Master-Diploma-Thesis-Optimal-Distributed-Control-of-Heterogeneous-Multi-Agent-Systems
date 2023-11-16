@@ -1,4 +1,4 @@
-# Optimal Distributed Control of Heterogeneous Multi-Agent Systems with Non - Differentiable Cost Functions and Switching Graph Topology.
+# Optimal Distributed Control of Heterogeneous Multi-Agent Systems with Non - Differentiable Cost Functions and Switching Graph Topology
 
 Master of Science in  Automation Systems - Field of Automatic Control Systems and Robotics.
 
