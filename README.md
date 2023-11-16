@@ -1,6 +1,6 @@
-# Adaptive and NN Control of Multi-Agent Systems
+# Optimal Distributed Control of Heterogeneous Multi-Agent Systems with Non - Differentiable Cost Functions and Switching Graph Topology.
 
-DPMS Master of Science Automation Systems - Control Systems and Robotics.
+Master of Science in  Automation Systems - Field of Automatic Control Systems and Robotics.
 
 National Technical University of Athens.
 
