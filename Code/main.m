@@ -1,0 +1,81 @@
+global T
+global D
+global beta
+global N
+global n
+global epsilon
+global D
+global Lplus
+global A
+global Ds
+global M
+global C
+global G
+global mu
+global x0
+global ai
+global tau
+global v_dot
+global s_i
+global d_max
+global theta
+global G
+global C
+
+N = 5;
+n = 3;
+g = 9.81;
+tau = 0.3;
+T = 2;
+beta = 2;
+c = 1;
+epsilon = 1e-8;
+Ds = 8;
+d_max = 0.2;
+v_dot = zeros(N*n,1);
+s_i = zeros(n,N);
+theta = rand().*ones(n*N,n*N);
+method = 'simple';
+ai = [2.4; 1.3; 0.5; 0.84; 1.25];
+mu = zeros(n,1);
+x0 = [1 1.5 4 -0.1 3;
+      0 -2 1 5 2.5;
+      1 2.4 2 0.5 3.4];
+M = [2.1 0 0 0 0;
+     0 3.2 0 0 0;
+     0 0 2 0 0;
+     0 0 0 1.8 0;
+     0 0 0 0 2.8];
+
+A = [1 -1 0 0 0;
+     1 0 0 -1 0;
+     0 1 0 -1 0;
+     0 1 0 0 -1;
+     0 0 1 -1 0];
+
+Lplus = [2 1 0 1 0;
+         1 3 0 1 1;
+         0 0 1 1 0;
+         1 1 1 3 0;
+         0 1 0 0 1];
+
+Lsigned = [2 -1 0 -1 0;
+           -1 3 0 -1 -1;
+           0 0 1 -1 0;
+           -1 -1 -1 3 0;
+           0 -1 0 0 1];
+D = diag([2,3,1,3,1]);
+g1 = [0;0;g];
+G1 = reshape(g1.*ones(1,n*N), [n*N,3]);
+G = G1(:,1);
+C = kron(diag([0.2,0.1,0.01,0.5,0.4]),eye(n));
+Ak = kron(A,eye(n));
+Lk = kron(Lsigned,eye(n));
+Dk = kron(D, eye(n));
+
+tspan = [0 200];
+x0 = zeros(2*n*N, 1);
+opt = odeset('RelTol',1e-5,'AbsTol',1e-6);
+
+
+[t, x] = ode45(@odefunc, tspan, x0, opt);
