@@ -1,16 +1,26 @@
 function dv = lagrangianDynamics(t, state, u)
+    % Inputs:
+    %           t: Simulation time
+    %           state: State vector of every agent
+    %           u: Control signal input
+    % Output:
+    %           dv: acceleration of every agent
+    %
+    % Description:
+    %           This script is consisted with the dynamics of every agent.
+    %           The dynamics are based on a fixed-wing VTOL UAV.
+
     global N
     global n
-    global M
     global C
     global G
     global v_dot
-    v = state((n*N+1):2*n*N);
-   
+    global Mk
     
-    for i=1:n*N
-        v_dot(i) = inv(kron(M,ones(n)))*(u + disturbance(t) - C*v(i) - G);
-    end
+    v = state((n*N+1):2*n*N);
+  
+    v_dot = inv(Mk)*(u + disturbance(t) - C*v - G);
+    
     dv = v_dot;
 end
 
