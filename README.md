@@ -30,7 +30,8 @@ system nonlinearities.
 their squared integrals to zero, ensuring convergence to an optimal consensus point. The
 algorithm and control laws were validated through simulations on a swarm of UAVs, demonstrating
 accurate and reliable performance in MATLAB.
-Keywords:
+
+### Keywords:
 
 Optimal Consensus, Distributed Non-Convex Optimization, Multi-Agent Systems, Asynchronous Communication, Distributed Automatic Control.
 ## Author
