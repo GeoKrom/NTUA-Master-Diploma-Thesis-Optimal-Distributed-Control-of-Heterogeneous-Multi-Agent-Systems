@@ -1,71 +1,52 @@
-function [x, s] = regProxGPDA(t, q_in, x_in, mu_in)
-%PROXGPDA Summary of this function goes here
-%   Inputs:
-%           t: simulation time
-%           q_in: position error vector of every agent
-%           x_in: position vector of every agent
-%   Ouputs:
-%           x: Updated position from algorithm
-%           s: Updated discrete signal
+function s = regProxGPDA(x_in)
+% regProxGPDA: Proximal Gradient Primal-Dual Algorithm update
 %
-%   Description:
-%           This script update the primal variable which is based on ProxGPDA, based on
-%           chapter 3.
+% Inputs:
+%   t:     current time (not used)
+%   q_in:  tracking error q_i(t) from the controller
+%   x_in:  current agent positions (flattened)
+%   mu_in: dual variable vector (flattened)
+%
+% Outputs:
+%   x: updated agent positions
+%   s: updated auxiliary primal variable s_i
 
-global T
-global D
-global beta
-global N
-global n
-global epsilon
-global D
-global Lplus
-global A
-global Ds
-global x0
-global mu
-global ai
-global method
-global s_i xinit s_i_old
-global s_val
-nu = 1;
-ell = 1;
-df = zeros(n,1);
-x_i = zeros(n,N);
-si = zeros(n,1);
-xo = zeros(n,1);
-x_0 = reshape(x0, [n,N]);
-xin = reshape(x_in(1,1:n*N),[n,N]);
-disp(xin);
-mu_new = reshape(mu_in, [n,N]);
-% Main loop of algorithm
+global T D Ds beta N n A xinit mu ai s_val x_obs k s_i x_j_sum x0 X_f x_star1 x_star2 Lplus x_j_i x_solve
+x_s = [x_solve x_solve x_solve x_solve x_solve];
+% Reshape inputs
+x_0 = reshape(x0, [n, N]);      % Initial positions
+xin = reshape(x_in, [n, N]);    % Current positions from ODE
+% s = zeros(n,N);
+params.a = 1.5;
+params.lambda = 0.3;
+params.sigma = 1.0;
+params.b = pi / 3;
+params.delta = 1e-2;
+params.epsilon = 1e-2;
+params.xobs = x_obs;
+type = 'nonconobs';
+% Loop over agents
+
 for ii = 1:N
-    disp("");
-    disp("Agent ");
-    disp(ii);
-    disp("");
+
     x_j_i = zeros(n,1);
-    x_j_sum = zeros(n,1);
-    gradFi = costGradFunction(xin(:,ii), x_0(:,ii), ai(ii));
+    
+    gradFi = costGradFunction(xin(:,ii), x_0(:,ii), params, type);
+    
     for jj = 1:N
-        % Check connectivity of every agent to update variables
-        if (abs(A(ii,jj)) == 1) && ii ~= jj
-            x_j_i = xin(:,jj) + x_j_i;
-            x_j_sum = x_j_sum + mu_new(:,ii);
-            % Primal variable update
-            si = xin(:,ii) - 1/(2*beta*D(ii,ii))*(beta*x_j_i - gradFi  - beta*x_j_sum);
-            xo = si + q_in(:,ii);
+        if abs(Lplus(ii,jj)) == 1 && ii ~= jj
+            x_j_i = x_j_i + xin(:,jj);
+            x_j_sum(:,ii) = x_j_sum(:,ii) + (xin(:,ii) - xin(:,jj));
         end
     end
-    s_i(:,ii) = si;
-    x_i(:,ii) = xo;
+       
+    % Primal variable update (from theory)
+    s(:,ii) = 0.5*(x_in(:,ii)) + (1/(2*beta*D(ii,ii)))*(beta*x_j_i - gradFi - beta*x_j_sum(:,ii));
+    % s(:,ii) = -0.5*x_in(:,ii) - (1/(2 * beta * D(ii,ii))) *(gradFi - gradFi_prev) + 1/D(ii,ii)*x_j_i - 0.5*(1/D(ii,ii)*x_j_i_prev + xin_prev(:,ii));
 end
-% end
-x = x_i;
-s = s_i;
-s_val = [s;s_val];
-disp("New position");
-disp("");
-disp(x);
-end
+% Update global s_i for next step
+% fprintf("‣ Updated dual norm: %.4f\n", norm(x_j_sum));
+% disp(x_j_sum);
+s_val = [s_val; s];
 
+end

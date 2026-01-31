@@ -17,9 +17,9 @@ function dv = lagrangianDynamics(t, state, u)
     global v_dot
     global Mk
     
-    v = state((n*N+1):2*n*N);
+    vel = state((n*N+1):2*n*N);
   
-    v_dot = inv(Mk)*(u + disturbance(t) - C*v - G);
+    v_dot = inv(Mk)*(u + disturbance(t) - C*vel - G);
     
     dv = v_dot;
 end

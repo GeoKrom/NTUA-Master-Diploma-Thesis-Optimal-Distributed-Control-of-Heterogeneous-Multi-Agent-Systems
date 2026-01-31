@@ -1,0 +1,83 @@
+function dstate = odefunc(t, state)
+%ODEFUNC Summary of this function goes here
+%   Detailed explanation goes here
+global n N T k s_i Ds theta x0 q_i t_err dt
+global q_res method X_f x_star x_solve x_star1 q_prev
+global q v s_i_old s_i_new q_out t_rval r_val_
+% disp("Start computing for all agents...");
+% Change vector n*Nx1 to a matrix nxN
+X = reshape(state(1:n*N), [n,N]);
+V = reshape(state((n*N + 1):2*n*N), [n,N]);
+x = state(1:n*N);
+v = state((n*N + 1):2*n*N);
+% error variables
+% Keep old value of si to compute error
+r_val = rho(t - floor(t/T)*T);
+% fprintf("rho(t) = %.4f\n", r_val);
+if r_val < 0 || r_val > 1
+    fprintf("rho(t) out of range: t = %.4f, k = %d → rho = %.4f\n", t, k, r_val);
+    % if r_val < 0
+    %     r_val = 0;
+    % end
+    % if r_val > 1
+    %     r_val = 1;
+    % end
+end
+% if (t == floor(t/T)*T) || (t == floor(t/T)*T + dt) 
+%     q = q_prev;
+% else
+    % q = X  - r_val*s_i - (1 - r_val)*s_i_old;
+% end
+
+% switch method
+%         case "Optimal Consensus"
+% 
+% 
+%         case "Formation Control"
+%             q = (X - X_f) - rho(t - k*T)*s_i - (1 - rho(t - k*T))*s_i_old;
+% 
+%         otherwise
+%             error("Unknown method selected. Use 'Optimal Consensus' or 'Formation Control'");
+%     end
+% Keep every norm update for visualization
+
+% if (t == floor(t/T)*T) || (t == floor(t/T)*T + dt)
+%     q = q_prev;
+% else
+%     q = X - (r_val*s_i + (1 - r_val)*s_i_old);
+% end
+q = X - (r_val*s_i + (1 - r_val)*s_i_old);
+
+for i = 1:N
+    q_res(i) = norm(q(:,i));
+end
+r_val_ = [r_val_;r_val];
+t_rval = [t_rval;t];
+q_i = [q_i, q_res'];
+t_err = [t_err, t];
+disp("");
+disp("Error variables...")
+disp(q);
+
+% Sliding manifold computation
+qr = reshape(q, [n*N, 1]);
+q_out = [q_out,qr];
+
+s_r = reshape(s_i, [N*n, 1]);
+s_r_old = reshape(s_i_old, [N*n, 1]);
+dr_val = drho(t - floor(t/T)*T);
+% fprintf("drho(t) = %.4f\n", dr_val);
+q_dot = v - dr_val*(s_r - s_r_old);
+omega = q_dot + theta*qr;
+
+% Control Signal
+u = robustFeedbackLinearization(t, x, v, omega, s_r, s_r_old);
+
+% New state after algorithm computation
+new_state = [x; v];
+% Agents dynamics
+dv = lagrangianDynamics(t, new_state, u);
+dstate = [v; dv];
+
+end
+

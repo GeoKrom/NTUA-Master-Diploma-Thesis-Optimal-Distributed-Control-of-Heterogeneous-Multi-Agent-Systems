@@ -1,36 +1,62 @@
-function fi = costGradFunction(x, x_init, a_i)
-%COSTFUNCTION returns a Nonconvex function
-%       Inputs:
-%               x: position of every agent
-%               x_init: initial position of every agent
-%               a_i: parameter vector
-%       Output:
-%               fi: Computed gradient of cost function
+function grad = costGradFunction(x, x0, params, type)
+% COSTGRADFUNCTION
+% Υπολογίζει το gradient μη κυρτής cost function συμβατής με ProxGPDA
 %
-%       Description:
-%               The gradient of every cost function f_i is computed to be
-%               used on the ProxGPDA.
-
-global tau
-global x_obs
-global n
-global N
-global X_f
-
-% Method 1 - Simple Non-Comvex function
-% fi = exp(-a_i*x)./(1 + exp(-a_i*x)).^2;
-% fi = f_i(:,2);
-
-% Method 2 - Obstacle Avoidance
- fi = (norm(x - x_init) - (tau/(tau + 1))*norm(x - x_obs));
-
-% Method 3 - Formation Control with Obstavle Avoidance
-% x_f = reshape(X_f, [n*N, 1]);
-% fi = (norm(x + X_f - x_init) + (tau/(tau + 1))*norm(x + X_f - x_obs))*ones(n,1);
-
-
-disp("Cost function vector");
-disp(fi);
-assignin("base","fi",fi);
+% Inputs:
+%   x      - current agent position (n x 1)
+%   x0     - στόχος (initial ή desired) (n x 1)
+%   params - struct με πεδία που χρειάζονται ανά περίπτωση
+%   type   - string: 'sigmoid', 'logsumexp', 'sine', 'bump', 'obstacle'
+%
+% Output:
+%   grad   - gradient vector (n x 1)
+    global tau
+    er = 1e-6;  % μικρή σταθερά για αποφυγή singularities
+    n = length(x);
+    switch lower(type)
+        case 'sigmoid'
+            % f(x) = sum 1 / (1 + exp(-a(x - x0))) - 1/2‖x - x0‖²
+            a = params.a;
+            x_obs = params.xobs;
+            exp_term = exp(-a .* (x - x0));
+            grad = (-a .* exp_term)./(1 + exp_term).^2 - (x - x0);
+    
+        case 'logsumexp'
+            % f(x) = log(sum(exp(a_i(x_i - x0_i)))) + λ/2 * ‖x - x0‖²
+            a = params.a;
+            lam = params.lambda;
+            exp_terms = exp(a .* (x - x0));
+            sum_exp = sum(exp_terms);
+            grad = (a .* exp_terms) / (sum_exp + er) + lam * (x - x0);
+    
+        case 'sine'
+            % f(x) = sum sin(b(x - x0)) + 1/2‖x - x0‖²
+            b = params.b;
+            grad = b .* cos(b .* (x - x0)) + (x - x0);
+    
+        case 'bump'
+            % f(x) = -exp(-‖x - x0‖² / σ²) + λ/2‖x - x0‖²
+            sig = params.sigma;
+            lam = params.lambda;
+            delta = x - x0;
+            norm_sq = norm(delta)^2;
+            bump = exp(-norm_sq / sig^2);
+            grad = (2 / sig^2) * delta * bump + lam * delta;
+    
+        case 'obstacle'
+            % f(x) = ‖x - x0‖ - 1/(‖x - xobs‖ + ε)
+            h = tau/(tau+1);
+            x_obs = params.xobs;
+            grad = 2*(x - x0) - 2*h*(x - x_obs);
+        case 'nonconobs'
+            % Nonconvex smooth cost: quartic minus quadratic
+            % f(x) = 0.25*||x - x0||^4 - 0.5*tau*||x - x_obs||^2 + 0.5*tau/(1 + ||x - xobs||^2)
+            alpha = params.a;
+            x_obs = params.xobs;
+            diff1 = x - x0;
+            diff2 = x - x_obs;
+            grad = (norm(diff1)^2).*diff1 - tau * diff2 - tau*diff2./((1 + norm(diff2)^2).^2);
+        otherwise
+            error('Unknown cost function type: %s', type);
+    end
 end
-

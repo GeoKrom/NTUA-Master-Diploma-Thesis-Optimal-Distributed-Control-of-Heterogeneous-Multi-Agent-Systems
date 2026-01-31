@@ -1,7 +1,7 @@
 clear;
 clc;
 tic;
-
+close all;
 %% Main program of simulation
 %   odefunc.m: script of ode function
 %   regProxGPDA.m: Gradient Proximal PDA algoritm script
@@ -16,47 +16,12 @@ tic;
 %               scripts.
 
 %% Global variables
-global T
-global D
-global beta
-global N
-global k
-global n
-global epsilon
-global Lplus
-global q_i
-global A
-global Ds
-global x_obs
-global M
-global tau
-global mu
-global x0
-global fi
-global ai
-global v_dot
-global s_i
-global d_max
-global theta
-global G
-global C
-global Mk
-global d
-global maxM
-global X_alg
-global u_global
-global t_con
-global t_err
-global ki1
-global lamda1
-global lamda2
-global q_res
-global z_f
-global R
-global s_val
-global X_f
-global method
-global q v s_i_old triggerTime s_i_new
+global T D k beta g1 q_out r_val_ dt
+global N n Lplus q_i A Ds x_obs x_solve x_j_i q_prev t_rval
+global M tau mu x0 fi ai v_dot s_i_new d_max theta G C Mk d maxM u_global
+global t_con t_err ki1 lamda1 lamda2 q_res z_f R Lplus ki2
+global s_val X_f method x_j_sum q s_i_old xinit s_i C1 x_star x_star1
+
 %% Parameter Initialization
 disp("Initialize parameters....");
 
@@ -65,56 +30,65 @@ n = 3;              % Agent's Dimensions
 g = 9.81;
 R = 4;            % Formation Radius
 z_f = 2;            % Desired Altitude of Formation
-T = 2;              % Sampled period time
-delta = 2;          % Algorithm constant
+T = .5;              % Sampled period time
+delta = 1e+1;          % Algorithm constant
 L = 2;              % Lipschitz constant
 
-Ds = 6;             % Ds = kT samples
-d_max = 0.4;        % ZOH delay factor
+% Ds = 8;             % Ds = kT samples
+d_max = 0.0;         % ZOH delay factor
 fi = zeros(n,1);
 v_dot = zeros(N*n,1);
 s_i = zeros(n,N);
 s_i_old = zeros(n,N);
-theta = 0.5*eye(n*N);  % Sliding manifold Gains
-k = 1;
+s_i_new = zeros(n,N);
+theta = 0.4;  % Sliding manifold Gains
 s_val = [];
 %% Use your desired method for consensus
 % method = "Formation Control";
 method = "Optimal Consensus";
 ai = [2.4; 1.3; 0.5; 0.84; 1.25];   % Logistic function constants per agent
-mu = zeros(N*n,1);
+mu = zeros(n,N);
 % Mass matrix
 M = [2.1 0 0 0 0;
     0 3.2 0 0 0;
-    0 0 2 0 0;
+    0 0 2.0 0 0;
     0 0 0 1.8 0;
     0 0 0 0 2.8];
 % Incidence matrix of graph
 A = [1 -1 0 0 0;
-    1 0 0 -1 0;
-    0 1 0 -1 0;
-    0 1 0 0 -1;
-    0 0 1 -1 0];
+     1 0 0 -1 0;
+     0 1 0 -1 0;
+     0 1 0 0 -1;
+     0 0 1 -1 0];
 % Signless Laplacian matrix
 Lplus = [2 1 0 1 0;
-    1 3 0 1 1;
-    0 0 1 1 0;
-    1 1 1 3 0;
-    0 1 0 0 1];
+        1 3 0 1 1;
+        0 0 1 1 0;
+        1 1 1 3 0;
+        0 1 0 0 1];
 % Signed Laplacian matrix
 Lsigned = [2 -1 0 -1 0;
-    -1 3 0 -1 -1;
-    0 0 1 -1 0;
-    -1 -1 -1 3 0;
-    0 -1 0 0 1];
+          -1 3 0 -1 -1;
+           0 0 1 -1 0;
+          -1 -1 -1 3 0;
+           0 -1 0 0 1];
 % Degree matrix
-D = diag([2,3,1,3,1]);
+D = diag([2 3 1 3 1]);
 maxM = max(eig(M));
+params.a = 1.5;
+a = 0.1;
 
+params.lambda = 0.3;
+params.sigma = 1.0;
+params.b = pi / 3;
+params.delta = 1e-2;
+params.epsilon = 1e-2;
+params.xobs = x_obs;
 g1 = [0;0;g];
 G1 = reshape(g1.*ones(1,n*N), [n*N,3]);
 G = G1(:,1);                                   % Gravity vector for all agents
-C = kron(diag([0.2,0.1,0.15,0.58,0.42]),eye(n));
+C1 = diag([20.25 12.05 15.25 10.5 8.0]);
+C = kron(C1,eye(n));
 Ak = kron(A,eye(n));
 Lk = kron(Lsigned,eye(n));
 Dk = kron(D, eye(n));
@@ -122,46 +96,88 @@ Mk = kron(M, eye(n));
 % ProxGPDA algorithm constants. Desired values from Corollary 3.1
 ep = 1e-4;
 Eig = eig(Lsigned);
+% Compute norm of Lplus (spectral norm)
+normLplus = norm(Lplus);            % == max(svd(Lplus))
+normD = norm(D);
 minNonZeroEig = min(Eig(Eig > 1e-10));
-c = max(delta/L, 6*norm(Lplus)/minNonZeroEig);
-beta = 0.5*(2*L*(2+c) + (1+c)*ep + sqrt((2*L*(2+c) + (1+c)*ep)^2 + 24*L^2/minNonZeroEig)) + ep;
-
+c = max(delta/L, 6*normLplus /minNonZeroEig + ep);
+% beta = 0.5*(2*L*c + (1+c)*ep + sqrt((2*L*c + (1+c)*ep)^2 + 24*L^2/minNonZeroEig)) + c;
+% beta = (6*normD + c*(2*L + ep)*minNonZeroEig - sqrt((6*normD + c*(2*L + ep)*minNonZeroEig)^2 + 24*L^2*minNonZeroEig*(1 - c*normD)))/(2*minNonZeroEig*(1 + c*normD)) + 2*c;
+beta = 300;
 % Obstacle Avoidance cost function
-x_obs = [1.0; 0.0; 0.5];
-tau = 0.6;
+x_obs = [-1.0; 0.2; 1.0];
+tau = 10;
 X_f = zeros(n,N);
 for i = 1:N
-    X_f(:,i) =  R*[cos(i*(pi/3)); sin(i*(pi/3)); z_f];
+    X_f(:,i) =  [R*cos(i*(pi/3)); R*sin(i*(pi/3)); z_f];
 end
 
 disp("Initialize state...");
-dt = 1e-4;
-tspan = 0:dt:120;
-tstart = 0;
-tend = 30;
-x0 = [1;0;1;
-    1.5;-2;2.4;
-    4;1;2;
-    -0.1;5;0.5;
-    3;2.5;3.4];
-X_alg = zeros(n,N);
+dt = 1e-3;
 
-X0 = reshape(x0,[n,N]);
-sum = zeros(n,1);
+x0 = [1;0;1;
+      1.5;-2;2.4;
+      4;1.1;2;
+      -0.1;5;0.5;
+      3;2.5;3.4];
+x_init_mean = zeros(n,1);
+X0 = reshape(x0, [n, N]);
+% Μέσος όρος των αρχικών θέσεων
 for i = 1:N
-    sum = sum + X0(:,i);
+    x_init_mean = x_init_mean + X0(:,i);
 end
 x_star = zeros(n,1);
-x_star = 1/N*sum + tau*(1/N*sum - x_obs);
-xinit = [x0; zeros(n*N, 1)];
+% x_init_mean = mean(x0, 1);
+% Define the function
+xobsk = reshape(x_obs.*ones(1,n*N), [n*N,3]);
+x_obsk = xobsk(:,1);
+xk = 0:0.01:150;
+lambda = 0.3;
+sigma = 1.0;
+ % f = @(xk) -exp(-norm(xk - x0)^2 / sigma^2) + lambda/2*norm(xk - x0)^2;
+f = @(xk) 0.25*norm(xk - x0).^4 - 0.5*tau*norm(xk - x_obsk).^2 + 0.5*tau/(1 + norm(xk - x_obsk).^2);
+% 
+% % Solve with fminunc
+ opts = optimoptions('fmincon','Algorithm','interior-point','Display','iter');
+ [x_star1, fval, exitflag, output, lambda, grad, hessian] = fmincon(f, x0, [], [], Ak, zeros(n*N,1),[],[],[],opts);
+% Θεωρητικό optimum
+x_star1 = reshape(x_star1, [n,N]);
 
+% plot(xk,f(xk));
+for i = 1:N
+    x_star = x_star + (1/N)*x_star1(:,i);
+end
+x_star1 = x_star1 + [-0.4 -0.4 -0.4 -0.4 -0.4; 0.3 0.3 0.3 0.3 0.3; -0.2 -0.2 -0.2 -0.2 -0.2];
+% function f = fk(x)
+%     % a = 0.1;
+%     tau = 10.0;
+%     x_obs = [-1.0; 0.2; 0.0];
+%     x0 = [1 1.5 4 -0.1 3];
+%     y0 = [0 -2 1.1 5 2.5];
+%     z0 = [1 2.4 2 0.5 3.4];
+%     s1 = [0; 0; 0];
+%     s2 = [0; 0; 0];
+%     for i = 1:5
+%         s1 = s1 + norm(x - [x0(i); y0(i); z0(i)])^2.*(x - [x0(i); y0(i); z0(i)]); 
+%         s2 = s2 + (x - [x0(i); y0(i); z0(i)]); 
+%     end
+%     f(1) = s1(1) - 5*tau*(x(1) - x_obs(1)) - 5*2*tau*(x(1) - x_obs(1))/(1 + norm(x - x_obs)^2)^2;
+%     f(2) = s1(2) - 5*tau*(x(2) - x_obs(2)) - 5*2*tau*(x(2) - x_obs(2))/(1 + norm(x - x_obs)^2)^2;
+%     f(3) = s1(3) - 5*tau*(x(3) - x_obs(3)) - 5*2*tau*(x(3) - x_obs(3))/(1 + norm(x - x_obs)^2)^2;
+% end
+% fun = @fk;
+% x_0 = [-5.1; -5.1; -5.0];
+% x_solve = fsolve(fun,x_0);
+xinit = [x0; zeros(n*N, 1)];
+x_ode_prev = x0;
 
 %% Control Parameter Gains
 % Static control gain
 ki1 = 10;
+ki2 = 10;
 % Exponential gain parameters
-lamda1 = .055;
-lamda2 = .015;
+lamda1 = 0.001;
+lamda2 = 0.005;
 
 %% Ode simulation
 u_global = [];
@@ -171,100 +187,305 @@ t_err = [];
 q_res = zeros(size(N));
 t = [];
 x = [];
+r_val_ = [];
+t_rval = [];
 tout = [];
 xout = [];
-ell = 1;
+q_out = [];
+opt = odeset('RelTol',1e-6,'AbsTol',1e-5);
 %% TODO
 % Change the mapping of ODE.
 % regProxPDA outside of ode.
 % Solving the ode recursivly in interval [kT, (k+1)T].
-while tstart < tend
-    s_i_old = s_i;
+x_j_sum = zeros(n,N);
+x_j_i = zeros(n,1);
+% Solve ODE over [kT, (k+1)T]
+for k = 1:200
+    fprintf("\n--- Time interval [%f, %f] ---\n", (k-1)*T, k*T);
+    % Update ProxGPDA (with current q and positions)
+    disp("Previous iteration");
+    disp(s_i_old);
 
-    opt = odeset('RelTol',1e-13,'AbsTol',1e-9,'Events',@(tout, xout) event(tout, xout));
-    [tout, xout] = ode45(@(tout, xout) odefunc(tout, xout), tstart:dt:tend, xinit, opt);
-    tstart = tout(end);
-    [x_alg, s_i] = regProxGPDA(tout, q, xout, mu);
-    x_alg = reshape(x_alg,[n*N,1]);
-    xinit = [x_alg;v];
-    % Dual variable update
-    if ell < Ds
-        ell = ell + 1;
-    else
-        mu = mu + Ak*xout(1,1:n*N)';
-        % disp(mu);
-        ell = 1;
+    t_sim = (k-1)*T:dt:k*T-dt;
+    [tout, xout] = ode45(@odefunc, t_sim, xinit, opt);
+    q_now = q;
+    % s_i_new = s_i;
+    % Get final state from ODE
+    x_ode_prev = xinit(1:n*N)';
+    x_ode = xout(end, 1:n*N);        % Final position
+    v_ode = xout(end, n*N+1:2*n*N);    % Final velocity
+    s_i_old = s_i;
+    s_i = regProxGPDA(x_ode);
+    disp("Current Iteration");
+    disp(s_i);
+    % Update initial state for next interval
+    xinit = [x_ode'; v_ode'];
+    % q_prev  = reshape(x_ode', [n,N])  - rho(tout - k*T)*s_i_new - (1 - rho(tout - k*T))*s_i_old;
+    % Logging
+    t = [t; tout];
+    x = [x; xout];
+    
+    % Check convergence
+    fprintf("--- Iteration %d ---\n", k);
+    x_ode_mat = reshape(x_ode, [n, N]);
+    x_ode_mat_prev = reshape(x_ode_prev, [n, N]);
+    for i = 1:N
+        % Διαφορά s_i
+        delta_s = norm(s_i(:,i) - s_i_old(:,i));
+    
+        % Απόσταση από x_star
+        delta_opt = norm(x_ode_mat(:,i) - x_solve);
+        delta_out_iter = norm(x_ode(:,i) - x_ode_prev(:,i));
+    
+        % Gradient
+        grad_fi_prev = costGradFunction(x_ode_mat_prev(:,i), x0((i-1)*n+1:i*n), params, 'nonconobs');
+        grad_fi = costGradFunction(x_ode_mat(:,i), x0((i-1)*n+1:i*n), params, 'nonconobs');
+        delta_grad_fi = norm(grad_fi - grad_fi_prev);
+        fprintf("Agent %d:\n", i);
+        fprintf("\t Δs_i = %.4e\n", delta_s);
+        fprintf("\t ‖x_i^r - x_i^{r-1}‖ = %.4f\n", delta_out_iter);
+        fprintf("\t ‖x_i - x*‖ = %.4f\n", delta_opt);
+        fprintf("\t ‖∇f_i‖ = %.4f\n", norm(grad_fi));
+        fprintf("\t ‖∇f_i(x^r) - ∇f_i(x^{r-1})‖ = %.4f\n", delta_grad_fi);
     end
-   
-    t = [tout;t];
-    x = [xout;x];
-    k = k + 1;
-    disp("");
-    disp("Number iteration");
-    disp(k);
 end
+X_f1 = [X_f, X_f(:,1)];
+% x_star1 = [3.0; 2.65; 3.0];
 disp("End of Simulation...");
-% xnew = [];
-% tnew = [];
-% for i = 1:size(x,1)
-%     if x(i,:) == x(i+1,:)
-%         continue;
-%     else
-%         xnew(i,:) = x(i,:);
-%         tnew(i,:) = t(i,:);
+
+% Plots
+% figure(1);
+% 
+% hold on;
+% 
+% % Agent colors
+% colors = lines(N);
+% 
+% % Extract positions over time
+% frameskip = 1000;  % για πιο γρήγορο animation
+% for kj = 1:frameskip:size(x,1)
+%     clf;
+%     hold on;
+%     % text(X0(1,:), X0(2,:),X0(3,:),'start ($t_0 = 0 sec$)', 'Color', colors, 'FontSize', 2,'Interpreter','latex');
+%     for i = 1:N
+%         xi = x(kj, (i-1)*n+1 : i*n);  % current position of agent i
+%         plot3(x(1:kj, (i-1)*n+1), x(1:kj, (i-1)*n+2), x(1:kj, (i-1)*n+3), ...
+%               '-', 'Color', colors(i,:), 'LineWidth', 2);  % trail
+%         % plot3(xi(1), xi(2), xi(3), 'o', 'MarkerSize', 8, 'MarkerFaceColor', colors(i,:), 'MarkerEdgeColor', 'k');
+%     end
+%     % plot3(x_star(1), x_star(2), x_star(3), 'kx','MarkerSize', 12, 'LineWidth', 2);
+%     % Obstacle (αν υπάρχει)
+%     if exist('x_obs', 'var')
+%         plot3(x_obs(1), x_obs(2), x_obs(3), 'rx', 'MarkerSize', 12, 'LineWidth', 2);
 %     end
 % 
+%     for i = 1:N
+%         plot3(X0(1,i), X0(2,i), X0(3,i), 'square', 'MarkerSize', 8, 'MarkerFaceColor', colors(i,:), 'MarkerEdgeColor', 'k');
+%         text(X0(1,i) + 0.1, X0(2,i), X0(3,i), 'Start',  'Color', colors(i,:), 'FontSize', 12);
+%     end
+% 
+%     plot3(X_f1(1,:), X_f1(2,:), X_f1(3,:), 'k--', 'MarkerSize', 12, 'LineWidth', 2);
+% 
+%     line([X_f1(1,1) X_f1(1,1)],[X_f1(2,1) X_f1(2,1)],[0 X_f1(3,1)], 'LineWidth', 2,'Color','k', 'LineStyle','--');
+%     line([X_f1(1,2) X_f1(1,2)],[X_f1(2,2) X_f1(2,2)],[0 X_f1(3,2)], 'LineWidth', 2,'Color','k', 'LineStyle','--');
+%     line([X_f1(1,3) X_f1(1,3)],[X_f1(2,3) X_f1(2,3)],[0 X_f1(3,3)], 'LineWidth', 2,'Color','k', 'LineStyle','--');
+%     line([X_f1(1,4) X_f1(1,4)],[X_f1(2,4) X_f1(2,4)],[0 X_f1(3,4)], 'LineWidth', 2,'Color','k', 'LineStyle','--');
+%     line([X_f1(1,5) X_f1(1,5)],[X_f1(2,5) X_f1(2,5)],[0 X_f1(3,5)], 'LineWidth', 2,'Color','k', 'LineStyle','--');
+% 
+%     for i = 1:N
+%         plot3(X_f(1,i), X_f(2,i), X_f1(3,i), 'diamond', 'MarkerSize', 8, 'MarkerFaceColor', colors(i,:), 'MarkerEdgeColor', 'k');
+%         text(X_f1(1,i) + 0.1, X_f1(2,i), X_f1(3,i), 'End',  'Color', colors(i,:), 'FontSize', 12);
+%     end
+%     view(3);
+%     pause(0.1);
 % end
+% legend('$x_1$','$x_2$','$x_3$','$x_4$','$x_5$','Interpreter','latex');
+% hold off;
+% axis equal;
+% grid on;
+% xlim([-5.5 5.5]); ylim([-5 5]); zlim([0 4]);
+% xlabel('X [m]');
+% ylabel('Y [m]');
+% zlabel('Z [m]');
 
-%% Plots
-t1 = t_con(end/2:end);
-figure(1);
+% figure(2);
+% clf;
+% hold on;
+% for kj = 1:frameskip:(size(x,1)/1000)
+%     clf;
+%     hold on;
+%     for i = 1:N
+%         xi = x(kj, (i-1)*n+1 : i*n);  % current position of agent i
+%         % plot3(x(1:kj, (i-1)*n+1), x(1:kj, (i-1)*n+2), x(1:kj, (i-1)*n+3), ...
+%         %       '--', 'Color', colors(i,:), 'LineWidth', 1.2);  % trail
+%         plot3(xi(1), xi(2), xi(3), 'o', 'MarkerSize', 8, 'MarkerFaceColor', colors(i,:), 'MarkerEdgeColor', 'k');
+%     end
+% 
+%     % Obstacle (αν υπάρχει)
+%     if exist('x_obs', 'var')
+%         plot3(x_obs(1), x_obs(2), x_obs(3), 'rx', 'MarkerSize', 12, 'LineWidth', 2);
+%     end
+%     for i = 1:N
+%         plot3(X0(1,i), X0(2,i), X0(3,i), 'square', 'MarkerSize', 8, 'MarkerFaceColor', colors(i,:), 'MarkerEdgeColor', 'k');
+%         text(X0(1,i) + 0.1, X0(2,i), X0(3,i), 'Start',  'Color', colors(i,:), 'FontSize', 12);
+% 
+%     end
+%     plot3(X_f1(1,:), X_f1(2,:), X_f1(3,:), 'k--.', 'MarkerSize', 12, 'LineWidth', 1);
+% 
+%     for i = 1:N
+%         plot3(X_f(1,i), X_f(2,i), X_f1(3,i), 'diamond', 'MarkerSize', 8, 'MarkerFaceColor', colors(i,:), 'MarkerEdgeColor', 'k');
+%         text(X_f(1,i) + 0.1, X_f(2,i), X_f(3,i), 'End',  'Color', colors(i,:), 'FontSize', 12);
+%     end
+%     % xlim([-10 20]); ylim([-20 20]); zlim([0 10]);
+%     view(3);
+%     pause(0.1);
+% end
+% axis equal;
+% grid on;
+% xlim([-5 5]); ylim([-5.5 5.5]); zlim([0 4]);
+% xlabel('X [m]');
+% ylabel('Y [m]');
+% zlabel('Z [m]');
+% 
+% figure(3);
+% clf;
+% hold on;
+% colors = lines(N);
+% for kj = 1:frameskip:(size(x,1)/10)
+%     clf;
+%     hold on;
+%     for i = 1:N
+%         xi = x(kj, (i-1)*n+1 : i*n);  % current position of agent i
+%         plot3(x(1:kj, (i-1)*n+1), x(1:kj, (i-1)*n+2), x(1:kj, (i-1)*n+3), ...
+%               '-', 'Color', colors(i,:), 'LineWidth', 2);  % trail
+%         plot3(xi(1), xi(2), xi(3), 'o', 'MarkerSize', 8, 'MarkerFaceColor', colors(i,:), 'MarkerEdgeColor', 'k');
+%     end
+% 
+%     % Obstacle (αν υπάρχει)
+%     if exist('x_obs', 'var')
+%         plot3(x_obs(1), x_obs(2), x_obs(3), 'rx', 'MarkerSize', 12, 'LineWidth', 2);
+%     end
+%     for i = 1:N
+%         plot3(X0(1,i), X0(2,i), X0(3,i), 'square', 'MarkerSize', 8, 'MarkerFaceColor', colors(i,:), 'MarkerEdgeColor', 'k');
+%         text(X0(1,i) + 0.1, X0(2,i), X0(3,i), 'Start',  'Color', colors(i,:), 'FontSize', 12);
+%     end
+%     plot3(X_f1(1,:), X_f1(2,:), X_f1(3,:), 'k--', 'MarkerSize', 12, 'LineWidth', 1);
+%     for i = 1:N
+%         plot3(X_f(1,i), X_f(2,i), X_f1(3,i), 'diamond', 'MarkerSize', 8, 'MarkerFaceColor', colors(i,:), 'MarkerEdgeColor', 'k');
+%         text(X_f1(1,i) + 0.1, X_f1(2,i), X_f1(3,i), 'End',  'Color', colors(i,:), 'FontSize', 12);
+%     end
+%     view(3);
+%     pause(0.1);
+% end
+% hold off;
+% axis equal;
+% grid on;
+% xlim([-5 5]); ylim([-5 5]); zlim([0 4]);
+% xlabel('X [m]');
+% ylabel('Y [m]');
+% zlabel('Z [m]');
+
+% x_solve = x_solve - [1.0 ; 1.0; 1.0];
+t1 = t_con(4*end/5:end);
+figure(4);
 clf;
+subplot(2,1,1);
 plot(t,x(:,1),'r-');
 hold on;
 plot(t,x(:,4),'m-');
 plot(t,x(:,7),'g-');
 plot(t,x(:,10),'k-');
 plot(t,x(:,13),'y-');
-plot(t,x_star(1).*ones(size(t)),'b--');
+% for i = 1:N
+%     plot(t,X_f1(1,i).*ones(size(t)),'b--');
+% end
+plot(t,x_solve(1).*ones(size(t)),'b--');
 hold off;
 grid on;
 xlabel('$time [s]$', 'FontSize', 14, 'Interpreter','latex');
 ylabel('$x_{i1} [m]$', 'FontSize', 14, 'Interpreter','latex');
-legend("$x_1$","$x_2$","$x_3$","$x_4$","$x_5$","$x^*$","Interpreter","latex",'Orientation','horizontal');
+legend("$x_1$","$x_2$","$x_3$","$x_4$","$x_5$","$x^*$","Interpreter","latex",'Orientation','horizontal','Location','southeast');
 
-figure(2);
+subplot(2,1,2);
+plot(t,x(:,16),'r-');
+hold on;
+plot(t,x(:,19),'m-');
+plot(t,x(:,22),'g-');
+plot(t,x(:,25),'k-');
+plot(t,x(:,28),'y-');
+hold off;
+grid on;
+xlabel('$time [s]$', 'FontSize', 14, 'Interpreter','latex');
+ylabel('$v_{i1} [m/s]$', 'FontSize', 14, 'Interpreter','latex');
+legend("$v_{x_1}$","$v_{x_2}$","$v_{x_3}$","$v_{x_4}$","$v_{x_5}$","Interpreter","latex",'Orientation','horizontal','Location','southeast');
+
+
+
+figure(5);
 clf;
+subplot(2,1,1);
 plot(t,x(:,2),'r-');
 hold on;
 plot(t,x(:,5),'m-');
 plot(t,x(:,8),'g-');
 plot(t,x(:,11),'k-');
 plot(t,x(:,14),'y-');
-plot(t,x_star(2).*ones(size(t)),'b--');
+% for i = 1:N
+%     plot(t,X_f1(2,i).*ones(size(t)),'b--');
+% end
+plot(t,x_solve(2).*ones(size(t)),'b--');
 hold off;
 grid on;
 xlabel('$time [s]$', 'FontSize', 14, 'Interpreter','latex');
 ylabel('$x_{i2} [m]$', 'FontSize', 14, 'Interpreter','latex');
-legend("$y_1$","$y_2$","$y_3$","$y_4$","$y_5$","$y^*$","Interpreter","latex",'Orientation','horizontal');
+legend("$y_1$","$y_2$","$y_3$","$y_4$","$y_5$","$y^*$","Interpreter","latex",'Orientation','horizontal','Location','southeast');
 
-figure(3);
+subplot(2,1,2);
+plot(t,x(:,17),'r-');
+hold on;
+plot(t,x(:,20),'m-');
+plot(t,x(:,23),'g-');
+plot(t,x(:,26),'k-');
+plot(t,x(:,29),'y-');
+hold off;
+grid on;
+xlabel('$time [s]$', 'FontSize', 14, 'Interpreter','latex');
+ylabel('$v_{i2} [m/s]$', 'FontSize', 14, 'Interpreter','latex');
+legend("$v_{y_1}$","$v_{y_2}$","$v_{y_3}$","$v_{y_4}$","$v_{y_5}$","Interpreter","latex",'Orientation','horizontal');
+
+figure(6);
 clf;
+subplot(2,1,1);
 plot(t,x(:,3),'r-');
 hold on;
 plot(t,x(:,6),'m-');
 plot(t,x(:,9),'g-');
 plot(t,x(:,12),'k-');
 plot(t,x(:,15),'y-');
-plot(t,x_star(3).*ones(size(t)),'b--');
+% for i = 1:N
+%     plot(t,X_f1(3,i).*ones(size(t)),'b--');
+% end
+plot(t,x_solve(3).*ones(size(t)),'b--');
 hold off;
 grid on;
 xlabel('$time [s]$', 'FontSize', 14, 'Interpreter', 'latex');
 ylabel('$x_{i3} [m]$', 'FontSize', 14, 'Interpreter','latex');
-legend("$z_1$","$z_2$","$z_3$","$z_4$","$z_5$","$z^*$","Interpreter","latex",'Orientation','horizontal');
+legend("$z_1$","$z_2$","$z_3$","$z_4$","$z_5$","$z^*$","Interpreter","latex",'Orientation','horizontal','Location','southeast');
 
+subplot(2,1,2);
+plot(t,x(:,18),'r-');
+hold on;
+plot(t,x(:,21),'m-');
+plot(t,x(:,24),'g-');
+plot(t,x(:,27),'k-');
+plot(t,x(:,30),'y-');
+hold off;
+grid on;
+xlabel('$time [s]$', 'FontSize', 14, 'Interpreter', 'latex');
+ylabel('$v_{i_3} [m/s]$', 'FontSize', 14, 'Interpreter','latex');
+legend("$v_{z_1}$","$v_{z_2}$","$v_{z_3}$","$v_{z_4}$","$v_{z_5}$","Interpreter","latex",'Orientation','horizontal');
 
-figure(4);
+figure(7);
 clf;
 plot(t_con,u_global(1,:),'r-');
 hold on;
@@ -274,23 +495,22 @@ plot(t_con,u_global(10,:),'k-');
 plot(t_con,u_global(13,:),'b-');
 hold off;
 grid on;
+% ylim([-1 1]);
 xlabel('$time [s]$', 'FontSize', 14, 'Interpreter','latex');
 ylabel('$u_{i1}$', 'FontSize', 14, 'Interpreter','latex');
 legend("$u_1$","$u_2$","$u_3$","$u_4$","$u_5$","Interpreter","latex","Location","southeast",'Orientation','horizontal');
 
-axes('Position',[.35 .35 .4 .2]);
+axes('Position',[0.3, 0.3, 0.3, 0.2]);
 box on;
 grid on;
 hold on
-plot(t1,u_global(1,end/2:end),'r-');
-plot(t1,u_global(4,end/2:end),'m-');
-plot(t1,u_global(7,end/2:end),'g-');
-plot(t1,u_global(10,end/2:end),'k-');
-plot(t1,u_global(13,end/2:end),'b-');
+plot(t1,u_global(1,4*end/5:end),'r-');
+plot(t1,u_global(4,4*end/5:end),'m-');
+plot(t1,u_global(7,4*end/5:end),'g-');
+plot(t1,u_global(10,4*end/5:end),'k-');
+plot(t1,u_global(13,4*end/5:end),'b-');
 
-
-
-figure(5);
+figure(8);
 clf;
 plot(t_con,u_global(2,:),'r-');
 hold on;
@@ -300,20 +520,21 @@ plot(t_con,u_global(11,:),'k-');
 plot(t_con,u_global(14,:),'b-');
 hold off;
 grid on;
+% ylim([-1 1]);
 xlabel('$time [s]$', 'FontSize', 14, 'Interpreter','latex');
 ylabel('$u_{i2}$', 'FontSize', 14, 'Interpreter','latex');
 legend("$u_1$","$u_2$","$u_3$","$u_4$","$u_5$","Interpreter","latex","Location","southeast",'Orientation','horizontal');
-axes('Position',[.35 .35 .4 .2]);
+axes('Position',[0.3, 0.3, 0.3, 0.2]);
 box on;
 grid on;
 hold on
-plot(t1,u_global(2,end/2:end),'r-');
-plot(t1,u_global(5,end/2:end),'m-');
-plot(t1,u_global(8,end/2:end),'g-');
-plot(t1,u_global(11,end/2:end),'k-');
-plot(t1,u_global(14,end/2:end),'b-');
+plot(t1,u_global(2,4*end/5:end),'r-');
+plot(t1,u_global(5,4*end/5:end),'m-');
+plot(t1,u_global(8,4*end/5:end),'g-');
+plot(t1,u_global(11,4*end/5:end),'k-');
+plot(t1,u_global(14,4*end/5:end),'b-');
 
-figure(6);
+figure(9);
 clf;
 plot(t_con,u_global(3,:),'r-');
 hold on;
@@ -323,20 +544,21 @@ plot(t_con,u_global(12,:),'k-');
 plot(t_con,u_global(15,:),'b-');
 hold off;
 grid on;
+% ylim([0 10]);
 xlabel('$time [s]$', 'FontSize', 14, 'Interpreter', 'latex');
 ylabel('$u_{i3}$', 'FontSize', 14, 'Interpreter','latex');
 legend("$u_1$","$u_2$","$u_3$","$u_4$","$u_5$","Interpreter","latex","Location","southeast",'Orientation','horizontal');
-axes('Position',[.35 .35 .4 .2]);
+axes('Position',[0.3, 0.3, 0.3, 0.2]);
 box on;
 grid on;
 hold on
-plot(t1,u_global(3,end/2:end),'r-');
-plot(t1,u_global(6,end/2:end),'m-');
-plot(t1,u_global(9,end/2:end),'g-');
-plot(t1,u_global(12,end/2:end),'k-');
-plot(t1,u_global(15,end/2:end),'b-');
+plot(t1,u_global(3,4*end/5:end),'r-');
+plot(t1,u_global(6,4*end/5:end),'m-');
+plot(t1,u_global(9,4*end/5:end),'g-');
+plot(t1,u_global(12,4*end/5:end),'k-');
+plot(t1,u_global(15,4*end/5:end),'b-');
 
-figure(7);
+figure(10);
 clf;
 plot(t_err, q_i(1,:),'r-');
 hold on;
@@ -349,7 +571,7 @@ grid on;
 xlabel('$time [s]$', 'FontSize', 14, 'Interpreter','latex');
 ylabel('$\|q_i\|$', 'FontSize', 14, 'Interpreter','latex');
 legend("$\|q_1\|$","$\|q_2\|$","$\|q_3\|$","$\|q_4\|$","$\|q_5\|$","Interpreter","latex",'Orientation','horizontal');
-axes('Position',[.35 .35 .4 .2]);
+axes('Position',[.4 .4 .3 .2]);
 box on;
 grid on;
 hold on
@@ -359,15 +581,16 @@ plot(t_err(end/2:end),q_i(3,end/2:end),'g-');
 plot(t_err(end/2:end),q_i(4,end/2:end),'k-');
 plot(t_err(end/2:end),q_i(5,end/2:end),'b-');
 
-% figure(8);
+figure(11);
+clf;
+plot(t_rval, r_val_,'r-');
+grid on;
+xlabel('$time [s]$', 'FontSize', 14, 'Interpreter','latex');
+ylabel('$\rho (t - k*T)$', 'FontSize', 14, 'Interpreter','latex');
+
+% figure(12);
 % clf;
-% axis([-10 10 -10 10 0 10]); 
-% [x,y] = meshgrid(-10:1:10,-10:0.1:10);
-% z = 0*x + 0*y;
-% surf(x, y, z);
-% xlabel("$x [m]$","Interpreter","latex");
-% ylabel("$y [m]$","Interpreter","latex");
-% zlabel("$z [m]$","Interpreter","latex");
-
-
-
+% plot(t_rval, s_val(1,1).*ones(t_rval),'r-');
+% grid on;
+% xlabel('$time [s]$', 'FontSize', 14, 'Interpreter','latex');
+% ylabel('$\rho (t - k*T)$', 'FontSize', 14, 'Interpreter','latex');
