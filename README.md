@@ -8,7 +8,7 @@ School of Electrical and Computer Engineering.
 
 Division of Signals, Control and Robotics.
 
-Control Systems Laboratory.
+Control and Desicion Theory Laboratory.
 
 ## Abstract
 
